@@ -491,46 +491,6 @@ Ruff is a fast Python linter and code formatter.
 | `ruff format .`         | Automatically formats Python files           |
 | `ruff format --check .` | Checks formatting without modifying files    |
 
-### Understanding Ruff Errors
-
-**Example Error:**
-
-```text
-I001 Import block is un-sorted or un-formatted
-
-Found 1 error.
-1 fixable with --fix.
-Error: Process completed with exit code 1.
-```
-
-**Reason:** Ruff detected an import formatting issue.
-
-**Incorrect Formatting:**
-
-```python
-from flask import Flask, render_template
-app = Flask(__name__)
-```
-
-**Correct Formatting:**
-
-```python
-from flask import Flask, render_template
-
-app = Flask(__name__)
-```
-
-**Automatic Fix:**
-
-Run locally:
-
-```bash
-ruff check . --fix
-ruff format .
-```
-
-Then commit and push the corrected code.
-
 **Important:**
 
 - `ruff check .` detects linting errors.
@@ -559,20 +519,5 @@ Then commit and push the corrected code.
 | `paths`                | Filters workflow triggers by changed file paths |
 | `actions/checkout`     | Checks out repository code                      |
 | `actions/setup-python` | Sets up Python                                  |
-
----
-
-## 7. Important Notes – Day-2
-
-1. Every workflow must be stored inside `.github/workflows/`.
-2. A reusable workflow must have `on: workflow_call`.
-3. A reusable workflow is called at the job level using `uses`.
-4. `needs` controls the execution order of jobs.
-5. Jobs run in parallel by default when there are no dependencies.
-6. `workflow_dispatch` allows manual execution.
-7. `push` automatically triggers a workflow when commits are pushed.
-8. `paths` helps execute workflows only when specific files change.
-9. Every GitHub-hosted job gets a fresh runner environment.
-10. Ruff can automatically fix supported linting errors and format Python files.
 
 ---
