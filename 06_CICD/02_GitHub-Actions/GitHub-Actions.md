@@ -521,3 +521,547 @@ Ruff is a fast Python linter and code formatter.
 | `actions/setup-python` | Sets up Python                                  |
 
 ---
+
+
+# 🚀 DAY-3: GitHub Actions – Self-Hosted Runners & CI/CD Deployment
+
+---
+
+## Types of GitHub Runners
+
+A runner is a machine that executes GitHub Actions workflow jobs.
+
+| Runner        | Description                    |
+| ------------- | ------------------------------ |
+| GitHub-hosted | Managed by GitHub.             |
+| Self-hosted   | Managed and maintained by you. |
+
+**GitHub-hosted Runner:**
+
+```yaml
+runs-on: ubuntu-latest
+```
+
+- Managed by GitHub.
+- A fresh environment is generally provided for each job.
+- Suitable for CI tasks like testing and building.
+
+**Self-hosted Runner:**
+
+```yaml
+runs-on: self-hosted
+```
+
+- Managed by you.
+- Can run on AWS EC2 or a local machine.
+- Useful for deployment on your own infrastructure.
+
+---
+
+
+## Step 1 – Create an EC2 Instance on AWS
+- Go to **AWS Console → EC2 → Launch Instance**.
+
+
+
+## Step 2 – Create a Self-Hosted Runner on GitHub
+
+Navigate to:
+
+**GitHub Repository → Settings → Actions → Runners → New self-hosted runner**
+
+Select:
+
+- Runner image: **Linux**
+- Architecture: **x64** (if your EC2 instance uses x86-64)
+
+**Important:** GitHub will display commands to download and configure the runner.
+
+---
+
+## Step 3 – Download and Configure the Runner on EC2
+
+### Download
+
+The following is an example. Use the download URL and version shown on your repository's runner setup page.
+
+```bash
+# Create a directory for the GitHub Actions runner
+mkdir actions-runner && cd actions-runner
+
+# Download the runner package
+# Use the current URL provided by GitHub.
+
+# Extract the downloaded package
+tar xzf ./actions-runner-linux-x64-<VERSION>.tar.gz
+```
+
+### Configure
+
+Copy the configuration command shown by GitHub. It follows this general format:
+
+```bash
+./config.sh --url https://github.com/OWNER/REPOSITORY --token <REGISTRATION_TOKEN>
+```
+
+During configuration, GitHub asks for a few details.
+
+| Prompt            | Example                                                                       |
+| ----------------- | ----------------------------------------------------------------------------- |
+| Runner group      | Press Enter to use Default                                                    |
+| Runner name       | `devboard-runner`                                                             |
+| Additional labels | Press Enter to skip, or add labels                                            |
+| Work folder       | Press Enter to use `_work`, or enter a custom folder. Example: `devboard_work` |
+
+After successful configuration, GitHub displays a message similar to:
+
+```text
+√ Runner successfully added
+√ Settings Saved
+```
+
+---
+
+## Step 4 – Start the Self-Hosted Runner
+
+For a quick test, you can start the runner in the foreground:
+
+```bash
+./run.sh
+```
+
+Keep the terminal session open while testing. Closing the session stops the runner process.
+
+### Recommended: Run the Runner as a Service
+
+For an EC2 instance that should keep accepting jobs after you disconnect from SSH, configure the runner as a service:
+
+```bash
+# From the actions-runner directory
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
+
+Check its status:
+
+```bash
+sudo ./svc.sh status
+```
+
+You can also stop and restart it:
+
+```bash
+sudo ./svc.sh stop
+sudo ./svc.sh start
+```
+
+### Verify Runner Status on GitHub
+
+Go to:
+
+**Repository → Settings → Actions → Runners**
+
+The runner should appear as **Idle** when it is online and waiting for a job.
+
+---
+
+## Step 5 – Configure CI Workflow on GitHub-Hosted Runners
+
+Create the following file:
+
+```text
+.github/
+└── workflows/
+    └── ci.yml
+```
+
+The CI workflow runs on GitHub-hosted runners using `ubuntu-latest`.
+
+### CI Workflow – `ci.yml`
+
+**Goal:** Lint, test, and build the frontend and backend, then push Docker images to DockerHub.
+
+```yaml
+# Goal: Lint, Test, Build Frontend & Backend
+# Then Push Docker Images to DockerHub
+
+# Workflow Name
+name: CI
+
+# Triggers On
+on:
+  push:
+    branches:
+      - advanced
+
+# Minimum permissions
+permissions:
+  contents: read
+
+jobs:
+  # ==========================================
+  # JOB 1: FRONTEND BUILD
+  # ==========================================
+  frontend-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ./frontend/package-lock.json
+
+      # Install Dependencies
+      - name: Install npm Packages
+        run: npm ci
+        working-directory: ./frontend
+
+      # Lint
+      - name: Run Linter
+        run: npm run lint
+        working-directory: ./frontend
+
+      # Test
+      - name: Run Tests
+        run: npm run test
+        working-directory: ./frontend
+
+      # Docker Login
+      - name: Docker Login
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Docker Build & Push
+      - name: Docker Build and Push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/devboard-frontend:latest
+
+
+  # ==========================================
+  # JOB 2: BACKEND BUILD
+  # ==========================================
+  backend-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      # Setup Go
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: ./backend/go.mod
+          cache-dependency-path: ./backend/go.sum
+
+      # Check Go formatting without modifying files
+      - name: Check Go Formatting
+        working-directory: ./backend
+        run: |
+          files=$(gofmt -l .)
+
+          if [ -n "$files" ]; then
+            echo "The following files need formatting:"
+            echo "$files"
+            exit 1
+          fi
+
+          echo "All Go files are properly formatted!"
+
+      # Lint
+      - name: Go-lang Linter
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13
+          working-directory: ./backend
+
+      # Go Vet
+      - name: Run Go Vet
+        run: go vet ./...
+        working-directory: ./backend
+
+      # Test
+      - name: Run Tests
+        run: go test -v -race ./...
+        working-directory: ./backend
+
+      # Docker Login
+      - name: Docker Login
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Docker Build & Push
+      - name: Docker Build and Push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/devboard-backend:latest
+
+
+  # ==========================================
+  # JOB 3: DEPLOY
+  # ==========================================
+  deploy:
+    name: Deploy Application
+    needs:
+      - build-frontend
+      - build-backend
+    uses: ./.github/workflows/cd.yml
+    secrets: inherit
+```
+
+### Explanation
+
+| Configuration      | Purpose                                          |
+| ------------------ | ------------------------------------------------ |
+| `deploy`           | Unique job ID for deployment.                    |
+| `needs`            | Waits for the frontend and backend jobs.         |
+| `uses`             | Calls the reusable CD workflow.                  |
+| `secrets: inherit` | Passes available secrets to the called workflow. |
+
+**Important:** `needs` must use the exact job IDs defined under `jobs`, not the job display names.
+
+Because the Docker build and push steps are part of the frontend and backend jobs, deployment waits for those jobs to finish successfully.
+
+---
+
+### DockerHub Secrets and Variables
+
+Go to:
+
+**Repository → Settings → Secrets and variables → Actions**
+
+Create:
+
+**Repository variable**
+
+```text
+DOCKERHUB_USERNAME = ankittripathidev
+```
+
+**Repository secret**
+
+```text
+DOCKERHUB_TOKEN = <YOUR_DOCKERHUB_ACCESS_TOKEN>
+```
+
+Use a DockerHub access token instead of your DockerHub account password.
+
+- Click on your profile.
+- Open Account Settings.
+- Select Personal Access Tokens.
+- Generate a new token.
+
+---
+
+## Step 6 – Install Docker and Docker Compose on EC2
+
+```bash
+# Update Ubuntu packages
+sudo apt update
+sudo apt upgrade -y
+
+# Install Docker and Compose
+sudo apt install -y docker.io docker-compose-v2
+
+# Check versions
+docker --version
+docker compose version
+
+# Give user Docker permissions
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Verify
+docker ps
+```
+
+---
+
+## Step 7 – Create a Reusable CD Workflow
+
+Create another file:
+
+```text
+.github/
+└── workflows/
+    ├── ci.yml
+    └── cd.yml
+```
+
+The CD workflow uses `workflow_call`, which allows the CI workflow to call it as a reusable workflow.
+
+### CD Workflow – `cd.yml`
+
+**Goal:** Deploy Docker images after the CI workflow has completed successfully.
+
+```yaml
+# Goal: Deploy Docker Images on Self-Hosted Runner
+
+# Workflow Name
+name: CD
+
+# Triggers On
+on:
+  workflow_call:
+
+# Minimum permissions
+permissions:
+  contents: read
+
+# Jobs
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Copy Example env to Main env
+        run: cp .env.example .env
+
+      # Docker Login
+      - name: Docker Login
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Deploy Containers
+      - name: Deploy with Docker Compose
+        run: |
+          docker compose pull
+          docker compose up -d
+```
+
+### Explanation
+
+| Configuration          | Purpose                                         |
+| ---------------------- | ----------------------------------------------- |
+| `workflow_call`        | Makes the CD workflow reusable.                 |
+| `runs-on: self-hosted` | Runs deployment on your EC2 self-hosted runner. |
+| `docker compose pull`  | Pulls images referenced by Docker Compose.      |
+| `docker compose up -d` | Creates or updates containers in detached mode. |
+
+**Production note:** Copying `.env.example` over `.env` is suitable only for a simple demonstration when the example file contains usable non-secret configuration. For production, keep a separately managed production `.env` file containing real configuration and secrets. Do not overwrite it during every deployment.
+
+---
+
+## Step 8 – Check the Self-Hosted Runner
+
+If you started the runner manually and it is not running, connect to EC2:
+
+```bash
+cd ~/actions-runner
+./run.sh
+```
+
+If you configured it as a service, check it instead:
+
+```bash
+cd ~/actions-runner
+sudo ./svc.sh status
+```
+
+Go to:
+
+**GitHub Repository → Settings → Actions → Runners**
+
+Verify that the runner is **Idle** and online.
+
+---
+
+## Step 9 – Configure EC2 Security Group Inbound Rules
+
+Open:
+
+**AWS Console → EC2 → Security Groups → Select Security Group → Edit Inbound Rules**
+
+Allow only the ports required by your application.
+
+Example:
+
+| Port | Purpose                                | Recommended access                       |
+| ---- | -------------------------------------- | ---------------------------------------- |
+| 22   | SSH                                    | Your trusted IP address only             |
+| 80   | HTTP                                   | Public, if serving HTTP                  |
+| 443  | HTTPS                                  | Public, if serving HTTPS                 |
+| 8080 | Application port, if directly exposed  | Restrict or place behind a reverse proxy |
+
+**Important security points:**
+
+- Do not expose PostgreSQL port `5432` publicly.
+- Do not expose backend ports publicly unless your architecture requires it.
+- If the frontend is served through port `80` or `443`, open those ports instead of assuming it uses `8080`.
+- Check the actual host port mappings in `docker-compose.yml`.
+- Prefer HTTPS for public production applications.
+
+---
+
+## Step 10 – Open the Application in a Browser
+
+Find the EC2 instance's public IP address.
+
+If your frontend is mapped to port `8080`, open:
+
+```text
+http://<EC2-PUBLIC-IP>:8080
+```
+
+The correct URL depends on the port mapping in your Docker Compose configuration and your EC2 security group.
+
+---
+
+## Step 11 – Verify the CI/CD Workflow
+
+After pushing code to the `advanced` branch:
+
+```bash
+git add .
+git commit -m "Add GitHub Actions CI/CD workflow"
+git push origin advanced
+```
+
+Go to:
+
+**GitHub Repository → Actions**
+
+Verify:
+
+1. Frontend job succeeds.
+2. Backend job succeeds.
+3. Deploy job succeeds.
+4. The self-hosted runner executes the deployment.
+5. Docker Compose pulls the required images.
+6. Containers are running on EC2.
+7. The application opens in the browser.
+
+### Successful GitHub Actions Deployment
+
+![Successful GitHub Actions CI/CD workflow run](images/sucess1.png)
+![Successful GitHub Actions CI/CD workflow run](images/sucess2.png)
+
+The attached screenshot shows a successful workflow run:
+
+- `build-frontend` – Successful
+- `build-backend` – Successful
+- `deploy` – Successful
+
+---
+
+**Final takeaway:** CI validates and publishes the application images. CD deploys those images on the self-hosted EC2 runner.
